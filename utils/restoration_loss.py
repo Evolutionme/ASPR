@@ -154,6 +154,57 @@ class AdaptivePixelStructureRefinementLoss(nn.Module):
             "perceptual": perceptual_loss.detach(), "color": color_loss.detach(),
         }
 
+    @torch.no_grad()
+    def density_map(self, pred, target, clamp_max=6.0, return_stats=False):
+        """Build a normalized APSR residual map for Gaussian density control.
+
+        The map is detached and normalized to have an image-wise mean near 1.0,
+        so callers can safely use a small external multiplier.
+        """
+        pred, target = self._prepare_pair(pred, target)
+        maps = self.diagnostic_maps(pred, target)
+
+        density = (
+            self.mse_weight * self._normalize_map(maps["mse"], clamp_max)
+            + self.hard_mse_weight * self._normalize_map(maps["hard_mse"], clamp_max)
+            + self.edge_weight * self._normalize_map(maps["edge"], clamp_max)
+            + self.structure_weight * self._normalize_map(maps["structure"], clamp_max)
+            + self.perceptual_weight * self._normalize_map(maps["perceptual"], clamp_max)
+            + self.color_weight * self._normalize_map(maps["color"], clamp_max)
+        )
+        density = self._normalize_map(density, clamp_max)
+
+        if not return_stats:
+            return density
+
+        stats = {
+            "density_mean": density.mean().detach(),
+            "density_max": density.max().detach(),
+        }
+        for name, value in maps.items():
+            stats[f"{name}_mean"] = value.mean().detach()
+        return density, stats
+
+    @torch.no_grad()
+    def diagnostic_maps(self, pred, target):
+        pred, target = self._prepare_pair(pred, target)
+        diff = pred - target
+        mse_map = diff.square().mean(dim=1, keepdim=True)
+        hard_mse_map = self._hard_pixel_mse_map(diff)
+        edge_map = self._multi_scale_map(pred, target, self._edge_map)
+        structure_map = self._multi_scale_map(pred, target, self._structure_map)
+        perceptual_map = self._multi_scale_map(pred, target, self._perceptual_map)
+        color_map = self._color_map(pred, target)
+
+        return {
+            "mse": mse_map,
+            "hard_mse": hard_mse_map,
+            "edge": edge_map,
+            "structure": structure_map,
+            "perceptual": perceptual_map,
+            "color": color_map,
+        }
+
     def _prepare_pair(self, pred, target):
         if pred.dim() == 3:
             pred = pred.unsqueeze(0)
@@ -174,6 +225,13 @@ class AdaptivePixelStructureRefinementLoss(nn.Module):
         weights = weights / weights.mean().clamp_min(self.eps)
         return (weights * diff.square()).mean()
 
+    def _hard_pixel_mse_map(self, diff):
+        error = diff.square().mean(dim=1, keepdim=True).sqrt()
+        relative = error / error.mean(dim=(-2, -1), keepdim=True).clamp_min(self.eps)
+        weights = 0.5 + 1.5 * relative.pow(self.hard_gamma) / (1.0 + relative.pow(self.hard_gamma))
+        weights = weights / weights.mean(dim=(-2, -1), keepdim=True).clamp_min(self.eps)
+        return weights * diff.square().mean(dim=1, keepdim=True)
+
     @staticmethod
     def _color_loss(pred, target):
         # Chroma supervision reduces perceptually obvious colour shifts while
@@ -192,3 +250,58 @@ class AdaptivePixelStructureRefinementLoss(nn.Module):
         size = (max(16, round(pred.shape[-2] * scale)), max(16, round(pred.shape[-1] * scale)))
         return (F.interpolate(pred, size=size, mode="area"),
                 F.interpolate(target, size=size, mode="area"))
+
+    def _multi_scale_map(self, pred, target, map_fn):
+        base_size = pred.shape[-2:]
+        total = pred.new_zeros((pred.shape[0], 1, *base_size))
+        weight_sum = 0.0
+        for level in range(self.edge_loss.levels):
+            weight = 1.0 / (2 ** level)
+            level_map = map_fn(pred, target)
+            if level_map.shape[-2:] != base_size:
+                level_map = F.interpolate(level_map, size=base_size, mode="bilinear", align_corners=False)
+            total = total + weight * level_map
+            weight_sum += weight
+            if min(pred.shape[-2:]) < 32:
+                break
+            pred = F.avg_pool2d(pred, 2, 2)
+            target = F.avg_pool2d(target, 2, 2)
+        return total / max(weight_sum, self.eps)
+
+    def _edge_map(self, pred, target):
+        edge_pred = self.edge_loss._laplacian(pred)
+        edge_target = self.edge_loss._laplacian(target)
+        return torch.sqrt((edge_pred - edge_target).square() + self.eps ** 2).mean(dim=1, keepdim=True)
+
+    def _structure_map(self, pred, target):
+        k = min(self.structure_loss.window_size, pred.shape[-2], pred.shape[-1])
+        if k % 2 == 0:
+            k -= 1
+        padding = k // 2
+        mu_x = F.avg_pool2d(pred, k, 1, padding)
+        mu_y = F.avg_pool2d(target, k, 1, padding)
+        var_x = (F.avg_pool2d(pred.square(), k, 1, padding) - mu_x.square()).clamp_min(0.0)
+        var_y = (F.avg_pool2d(target.square(), k, 1, padding) - mu_y.square()).clamp_min(0.0)
+        cov_xy = F.avg_pool2d(pred * target, k, 1, padding) - mu_x * mu_y
+        luminance = (2.0 * mu_x * mu_y + 0.01 ** 2) / (mu_x.square() + mu_y.square() + 0.01 ** 2)
+        structure = (2.0 * cov_xy + 0.03 ** 2) / (var_x + var_y + 0.03 ** 2)
+        return (1.0 - (luminance * structure).clamp(-1.0, 1.0)).mean(dim=1, keepdim=True).clamp_min(0.0)
+
+    def _perceptual_map(self, pred, target):
+        pred_feat = self.perceptual_loss._features(pred)
+        target_feat = self.perceptual_loss._features(target)
+        return torch.sqrt((pred_feat - target_feat).square() + self.eps ** 2).mean(dim=1, keepdim=True)
+
+    @staticmethod
+    def _color_map(pred, target):
+        pred_chroma = torch.cat((pred[:, 2:3] - pred[:, 1:2], pred[:, 0:1] - pred[:, 1:2]), 1)
+        target_chroma = torch.cat((target[:, 2:3] - target[:, 1:2], target[:, 0:1] - target[:, 1:2]), 1)
+        return F.smooth_l1_loss(pred_chroma, target_chroma, beta=0.02, reduction="none").mean(dim=1, keepdim=True)
+
+    def _normalize_map(self, residual_map, clamp_max):
+        residual_map = torch.nan_to_num(residual_map, nan=0.0, posinf=0.0, neginf=0.0).clamp_min(0.0)
+        mean = residual_map.mean(dim=(-2, -1), keepdim=True).clamp_min(self.eps)
+        normalized = residual_map / mean
+        if clamp_max and clamp_max > 0:
+            normalized = normalized.clamp(max=clamp_max)
+        return normalized

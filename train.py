@@ -88,7 +88,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         gaussians.rl_controller.restore(torch.load(rl_controller_path))
 
     apsr_loss_fn = None
-    if getattr(opt, "lambda_apsr", 0.0) > 0:
+    if getattr(opt, "lambda_apsr", 0.0) > 0 or getattr(opt, "lambda_apsr_density", 0.0) > 0:
         apsr_loss_fn = AdaptivePixelStructureRefinementLoss(
             mse_weight=opt.apsr_mse_weight,
             hard_mse_weight=opt.apsr_hard_mse_weight,
@@ -204,13 +204,23 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         apsr_loss = image.new_zeros(())
         apsr_weight = 0.0
         apsr_logs = None
-        if apsr_loss_fn is not None and iteration >= opt.apsr_start_iter:
+        if apsr_loss_fn is not None and getattr(opt, "lambda_apsr", 0.0) > 0 and iteration >= opt.apsr_start_iter:
             apsr_weight = opt.lambda_apsr
             if opt.apsr_warmup_iters > 0:
                 warmup_step = min(iteration - opt.apsr_start_iter + 1, opt.apsr_warmup_iters)
                 apsr_weight *= warmup_step / opt.apsr_warmup_iters
             apsr_loss, apsr_logs = apsr_loss_fn(image.unsqueeze(0), gt_image.unsqueeze(0))
             loss = loss + apsr_weight * apsr_loss
+
+        late_mse_loss = image.new_zeros(())
+        late_mse_weight = 0.0
+        if getattr(opt, "late_mse_weight", 0.0) > 0 and iteration >= opt.late_mse_start_iter:
+            late_mse_weight = opt.late_mse_weight
+            if opt.late_mse_warmup_iters > 0:
+                warmup_step = min(iteration - opt.late_mse_start_iter + 1, opt.late_mse_warmup_iters)
+                late_mse_weight *= warmup_step / opt.late_mse_warmup_iters
+            late_mse_loss = (image - gt_image).square().mean()
+            loss = loss + late_mse_weight * late_mse_loss
         
         event_loss.record()
         
@@ -232,7 +242,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             iter_time = iter_start.elapsed_time(iter_end)
             # Log and save
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_time, testing_iterations, scene, render_fastgs, (pipe, background, opt.mult))
-            if tb_writer and apsr_loss_fn is not None:
+            if tb_writer and apsr_loss_fn is not None and getattr(opt, "lambda_apsr", 0.0) > 0:
                 tb_writer.add_scalar('train_loss_patches/apsr_loss', apsr_loss.item(), iteration)
                 tb_writer.add_scalar('train_loss_patches/apsr_weight', apsr_weight, iteration)
                 if apsr_logs is not None:
@@ -242,6 +252,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     tb_writer.add_scalar('train_loss_patches/apsr_structure', apsr_logs["structure"].item(), iteration)
                     tb_writer.add_scalar('train_loss_patches/apsr_perceptual', apsr_logs["perceptual"].item(), iteration)
                     tb_writer.add_scalar('train_loss_patches/apsr_color', apsr_logs["color"].item(), iteration)
+            if tb_writer and getattr(opt, "late_mse_weight", 0.0) > 0:
+                tb_writer.add_scalar('train_loss_patches/late_mse_loss', late_mse_loss.item(), iteration)
+                tb_writer.add_scalar('train_loss_patches/late_mse_weight', late_mse_weight, iteration)
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians to {}".format(iteration, dataset.model_path))
                 scene.save(iteration)
@@ -273,7 +286,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 densify_executed = True
                 densify_start.record()
 
-                gaussians_state_for_rl, metric_score, visible_mask = get_gaussians_state_for_rl(camlist, gaussians, pipe, bg, opt)
+                gaussians_state_for_rl, metric_score, visible_mask = get_gaussians_state_for_rl(
+                    camlist,
+                    gaussians,
+                    pipe,
+                    bg,
+                    opt,
+                    apsr_loss_fn=apsr_loss_fn,
+                    iteration=iteration,
+                    tb_writer=tb_writer,
+                )
                 pre_metric_score = metric_score.clone()
                 pre_visible_mask = visible_mask.clone()
 
@@ -297,7 +319,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         if iteration % 3000 == 0 and iteration > opt.densify_until_iter and iteration < opt.iterations:
             densify_executed = True
-            gaussians.final_prune_rl(min_opacity = opt.my_min_opacity_final)
+            gaussians.final_prune_rl(
+                min_opacity=opt.my_min_opacity_final,
+                args=opt,
+                iteration=iteration,
+                tb_writer=tb_writer,
+            )
 
         delayed_iteration = iteration - opt.delay_iter_for_reward
         if delayed_iteration > opt.densify_from_iter and delayed_iteration < opt.densify_until_iter \
@@ -314,7 +341,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             parent_mapping = gaussians.parent_mapping
             
             with torch.no_grad():
-                new_metric_score, new_visible_mask = get_metric_score(camlist, gaussians, pipe, bg, opt)
+                new_metric_score, new_visible_mask = get_metric_score(
+                    camlist,
+                    gaussians,
+                    pipe,
+                    bg,
+                    opt,
+                    apsr_loss_fn=apsr_loss_fn,
+                    iteration=delayed_iteration,
+                    tb_writer=tb_writer,
+                    log_prefix="apsr_density/reward_after",
+                )
                 new_metric_score = scatter_add(new_metric_score, parent_mapping, dim=0, dim_size=reward.shape[0])
                 new_visible_mask = scatter_add(new_visible_mask.float(), parent_mapping, dim=0, dim_size=reward.shape[0])
                 final_visible_mask = torch.logical_and(pre_visible_mask, new_visible_mask.bool())
@@ -323,6 +360,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
                 points_improvement = new_metric_score[valid_mask] - pre_metric_score[valid_mask]
                 reward[valid_mask] += points_improvement
+
+                if tb_writer:
+                    tb_writer.add_scalar("reward/valid_ratio", valid_mask.float().mean().item(), iteration)
+                    tb_writer.add_scalar("reward/pre_visible_ratio", pre_visible_mask.float().mean().item(), iteration)
+                    tb_writer.add_scalar("reward/final_visible_ratio", final_visible_mask.float().mean().item(), iteration)
+                    if points_improvement.numel() > 0:
+                        tb_writer.add_scalar("reward/metric_improvement_mean", points_improvement.mean().item(), iteration)
+                        tb_writer.add_scalar("reward/metric_improvement_std", points_improvement.std(unbiased=False).item(), iteration)
+                        tb_writer.add_scalar("reward/pre_metric_valid_mean", pre_metric_score[valid_mask].mean().item(), iteration)
+                        tb_writer.add_scalar("reward/new_metric_valid_mean", new_metric_score[valid_mask].mean().item(), iteration)
 
                 if getattr(opt, "rl_reward_norm", True) and pre_visible_mask.any():
                     reward_valid = reward[valid_mask]

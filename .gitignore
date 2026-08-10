@@ -5,3 +5,12 @@ output-up-orin
 output
 submodules
 tandt_db
+output-corrgate
+output-corrgate-w05
+output-directcorr-w05
+output-gated
+output-gated-floor015
+output-mip-extra
+output-sa-legs-default
+output-smoke
+output-statefirst

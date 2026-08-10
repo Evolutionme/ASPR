@@ -42,6 +42,29 @@ class MLPStateEncoder(nn.Module):
         return self.output_norm(x)
 
 
+class APSRResidualStateEncoder(nn.Module):
+    """Preserve the LeGS encoder and learn APSR as a zero-start residual."""
+
+    def __init__(self, base_input_dim=11, hidden_dim=64, adapter_scale=1.0):
+        super().__init__()
+        self.base_input_dim = base_input_dim
+        self.base_encoder = MLPStateEncoder(base_input_dim, hidden_dim)
+        self.apsr_adapter = nn.Linear(1, hidden_dim, bias=False)
+        nn.init.zeros_(self.apsr_adapter.weight)
+        self.adapter_scale = float(adapter_scale)
+        self.last_adapter_abs_mean = 0.0
+        self.last_base_abs_mean = 0.0
+
+    def forward(self, state_features, xyz_coords=None):
+        base_encoded = self.base_encoder(state_features[:, :self.base_input_dim])
+        apsr_state = state_features[:, self.base_input_dim:self.base_input_dim + 1]
+        adapter_output = self.apsr_adapter(apsr_state) * self.adapter_scale
+
+        self.last_adapter_abs_mean = adapter_output.detach().abs().mean().item()
+        self.last_base_abs_mean = base_encoded.detach().abs().mean().item()
+        return base_encoded + adapter_output
+
+
 class PPOActor(nn.Module):
     """
     PPO策略网络 - 输出动作概率分布
@@ -150,6 +173,15 @@ class GaussianDensificationController:
         self.use_my_value = getattr(training_args, 'rl_use_my_value', False)
 
         state_dim = training_args.rl_state_dim
+        apsr_state_enabled = (
+            bool(getattr(training_args, "use_apsr_density_control", 0))
+            and bool(getattr(training_args, "apsr_density_use_state", 1))
+            and getattr(training_args, "lambda_apsr_density", 0.0) > 0
+        )
+        use_apsr_residual_adapter = (
+            apsr_state_enabled
+            and bool(getattr(training_args, "apsr_density_use_residual_adapter", 0))
+        )
         hidden_dim = training_args.rl_net_hidden_dim
 
         self.actor = PPOActor(hidden_dim, action_dim=4 if training_args.use_delete_action else 3).to(device)
@@ -161,7 +193,16 @@ class GaussianDensificationController:
 
         if not self.use_my_value:
             self.critic = PPOCritic(hidden_dim).to(device)
-        self.state_encoder = MLPStateEncoder(state_dim, hidden_dim).to(device)
+        if use_apsr_residual_adapter:
+            self.state_encoder = APSRResidualStateEncoder(
+                state_dim,
+                hidden_dim,
+                adapter_scale=getattr(training_args, "apsr_density_adapter_scale", 1.0),
+            ).to(device)
+        else:
+            if apsr_state_enabled:
+                state_dim += 1
+            self.state_encoder = MLPStateEncoder(state_dim, hidden_dim).to(device)
 
         if getattr(training_args, "rl_inference_only", False):
             self.actor.eval()
@@ -542,6 +583,21 @@ class GaussianDensificationController:
             tb_writer.add_scalar("rl/ratio_avg", ratio_avg, iteration)
             tb_writer.add_scalar("rl/value_mean", all_values.mean().item(), iteration)
             tb_writer.add_scalar("rl/value_std", all_values.std().item(), iteration)
+            if isinstance(self.state_encoder, APSRResidualStateEncoder):
+                adapter_abs = self.state_encoder.last_adapter_abs_mean
+                base_abs = self.state_encoder.last_base_abs_mean
+                tb_writer.add_scalar("rl_apsr_adapter/output_abs_mean", adapter_abs, iteration)
+                tb_writer.add_scalar("rl_apsr_adapter/base_abs_mean", base_abs, iteration)
+                tb_writer.add_scalar(
+                    "rl_apsr_adapter/output_to_base_ratio",
+                    adapter_abs / max(base_abs, 1e-8),
+                    iteration,
+                )
+                tb_writer.add_scalar(
+                    "rl_apsr_adapter/weight_norm",
+                    self.state_encoder.apsr_adapter.weight.detach().norm().item(),
+                    iteration,
+                )
 
     def save_models(self, path):
         payload = {

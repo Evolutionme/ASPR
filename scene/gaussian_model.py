@@ -506,7 +506,18 @@ class GaussianModel:
             args.densify_until_iter - args.densify_from_iter,
             initial_temp=args.my_min_opacity_init, final_temp=args.my_min_opacity_final
         )
-        prune_mask = opacity < (my_min_opacity if self.training_args.use_prune_estimator else min_opacity)
+        prune_opacity_threshold = my_min_opacity if self.training_args.use_prune_estimator else min_opacity
+        if bool(getattr(args, "use_apsr_density_control", 0)) and getattr(args, "lambda_apsr_density", 0.0) > 0:
+            prune_scale = max(float(getattr(args, "apsr_density_prune_scale", 1.0)), 0.0)
+            prune_opacity_threshold *= prune_scale
+        prune_mask = opacity < prune_opacity_threshold
+
+        if tb_writer:
+            tb_writer.add_scalar("rl/prune_opacity_threshold", float(prune_opacity_threshold), iteration)
+            tb_writer.add_scalar("rl/prune_candidate_ratio", prune_mask.float().mean().item(), iteration)
+            tb_writer.add_scalar("rl/valid_candidate_ratio", valid_mask.float().mean().item(), iteration)
+            tb_writer.add_scalar("rl/opacity_mean", opacity_mean, iteration)
+            tb_writer.add_scalar("rl/opacity_median", opacity_median, iteration)
 
         if args.use_prune_estimator and visible_mask is not None:
             prune_mask = torch.logical_and(prune_mask, visible_mask)
@@ -573,6 +584,15 @@ class GaussianModel:
             tb_writer.add_scalar("rl/action_clone_ratio", clone_ratio, iteration)
             tb_writer.add_scalar("rl/action_split_ratio", split_ratio, iteration)
             tb_writer.add_scalar("rl/action_delete_ratio", delete_ratio, iteration)
+
+            if bool(getattr(args, "use_apsr_density_control", 0)) and bool(getattr(args, "apsr_density_use_state", 1)) and gaussians_state_for_rl.shape[-1] > args.rl_state_dim:
+                apsr_state = gaussians_state_for_rl[:, -1].detach()
+                if valid_mask.any():
+                    tb_writer.add_scalar("rl_apsr_state/valid_mean", apsr_state[valid_mask].mean().item(), iteration)
+                for action_id, action_name in ((0, "keep"), (1, "clone"), (2, "split"), (3, "delete")):
+                    action_mask = action == action_id
+                    if action_mask.any():
+                        tb_writer.add_scalar(f"rl_apsr_state/{action_name}_mean", apsr_state[action_mask].mean().item(), iteration)
 
         clone_action_mask = action == 1
         split_action_mask = action == 2
@@ -649,7 +669,13 @@ class GaussianModel:
         self.xyz_gradient_accum_abs[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter, 2:], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
 
-    def final_prune_rl(self, min_opacity):
-        prune_mask = (self.get_opacity < min_opacity).squeeze(-1)
+    def final_prune_rl(self, min_opacity, args=None, iteration=None, tb_writer=None):
+        prune_threshold = min_opacity
+        if args is not None and bool(getattr(args, "use_apsr_density_control", 0)):
+            prune_threshold *= max(float(getattr(args, "apsr_density_final_prune_scale", 1.0)), 0.0)
+        prune_mask = (self.get_opacity < prune_threshold).squeeze(-1)
+        if tb_writer is not None:
+            tb_writer.add_scalar("rl/final_prune_opacity_threshold", float(prune_threshold), iteration)
+            tb_writer.add_scalar("rl/final_prune_candidate_ratio", prune_mask.float().mean().item(), iteration)
         final_prune = prune_mask
         self.prune_points(final_prune)

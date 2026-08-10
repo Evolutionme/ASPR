@@ -520,7 +520,11 @@ renderCUDA(
                         accum_color[ch] += current_color;
                     }
                     current_diff /= CHANNELS;
-					atomicAdd(&(metric_per_gs[collected_id[j]]), current_diff - actual_diff);
+                    float residual_signal = metric_map[pix_id];
+                    float residual_weight = fabsf(residual_signal);
+                    float metric_scale = residual_signal > 0.0f ? (1.0f + residual_signal) : 1.0f;
+					atomicAdd(&(metric_per_gs[collected_id[j]]), (current_diff - actual_diff) * metric_scale);
+					atomicAdd(&(metricCount[collected_id[j]]), residual_weight * alpha * T);
 					atomicAdd(&(gs_weight[collected_id[j]]), alpha * T);
 
                     T = test_T;

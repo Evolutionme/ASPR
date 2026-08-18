@@ -33,7 +33,7 @@ def readImages(renders_dir, gt_dir):
         image_names.append(fname)
     return renders, gts, image_names
 
-def evaluate(model_paths):
+def evaluate(model_paths, method_filter=None):
 
     full_dict = {}
     per_view_dict = {}
@@ -43,23 +43,34 @@ def evaluate(model_paths):
 
     for scene_dir in model_paths:
         try:
+            scene_path = Path(scene_dir)
+            direct_method = (scene_path / "renders").is_dir() and (scene_path / "gt").is_dir()
+            result_dir = scene_path if direct_method else scene_path
+            scene_key = str(scene_path)
             print("Scene:", scene_dir)
-            full_dict[scene_dir] = {}
-            per_view_dict[scene_dir] = {}
-            full_dict_polytopeonly[scene_dir] = {}
-            per_view_dict_polytopeonly[scene_dir] = {}
+            full_dict[scene_key] = {}
+            per_view_dict[scene_key] = {}
+            full_dict_polytopeonly[scene_key] = {}
+            per_view_dict_polytopeonly[scene_key] = {}
 
-            test_dir = Path(scene_dir) / "test"
+            if direct_method:
+                method_dirs = [(scene_path.name, scene_path)]
+            else:
+                test_dir = scene_path / "test"
+                method_dirs = [
+                    (method, test_dir / method)
+                    for method in os.listdir(test_dir)
+                    if method_filter is None or method == method_filter
+                ]
 
-            for method in os.listdir(test_dir):
+            for method, method_dir in method_dirs:
                 print("Method:", method)
 
-                full_dict[scene_dir][method] = {}
-                per_view_dict[scene_dir][method] = {}
-                full_dict_polytopeonly[scene_dir][method] = {}
-                per_view_dict_polytopeonly[scene_dir][method] = {}
+                full_dict[scene_key][method] = {}
+                per_view_dict[scene_key][method] = {}
+                full_dict_polytopeonly[scene_key][method] = {}
+                per_view_dict_polytopeonly[scene_key][method] = {}
 
-                method_dir = test_dir / method
                 gt_dir = method_dir/ "gt"
                 renders_dir = method_dir / "renders"
                 renders, gts, image_names = readImages(renders_dir, gt_dir)
@@ -78,17 +89,17 @@ def evaluate(model_paths):
                 print("  LPIPS: {:>12.7f}".format(torch.tensor(lpipss).mean(), ".5"))
                 print("")
 
-                full_dict[scene_dir][method].update({"SSIM": torch.tensor(ssims).mean().item(),
+                full_dict[scene_key][method].update({"SSIM": torch.tensor(ssims).mean().item(),
                                                         "PSNR": torch.tensor(psnrs).mean().item(),
                                                         "LPIPS": torch.tensor(lpipss).mean().item()})
-                per_view_dict[scene_dir][method].update({"SSIM": {name: ssim for ssim, name in zip(torch.tensor(ssims).tolist(), image_names)},
+                per_view_dict[scene_key][method].update({"SSIM": {name: ssim for ssim, name in zip(torch.tensor(ssims).tolist(), image_names)},
                                                             "PSNR": {name: psnr for psnr, name in zip(torch.tensor(psnrs).tolist(), image_names)},
                                                             "LPIPS": {name: lp for lp, name in zip(torch.tensor(lpipss).tolist(), image_names)}})
 
-            with open(scene_dir + "/results.json", 'w') as fp:
-                json.dump(full_dict[scene_dir], fp, indent=True)
-            with open(scene_dir + "/per_view.json", 'w') as fp:
-                json.dump(per_view_dict[scene_dir], fp, indent=True)
+            with open(result_dir / "results.json", 'w') as fp:
+                json.dump(full_dict[scene_key], fp, indent=True)
+            with open(result_dir / "per_view.json", 'w') as fp:
+                json.dump(per_view_dict[scene_key], fp, indent=True)
         except:
             print("Unable to compute metrics for model", scene_dir)
 
@@ -99,5 +110,7 @@ if __name__ == "__main__":
     # Set up command line argument parser
     parser = ArgumentParser(description="Training script parameters")
     parser.add_argument('--model_paths', '-m', required=True, nargs="+", type=str, default=[])
+    parser.add_argument('--method', type=str, default=None,
+                        help='Evaluate only this method directory under each model path.')
     args = parser.parse_args()
-    evaluate(args.model_paths)
+    evaluate(args.model_paths, args.method)

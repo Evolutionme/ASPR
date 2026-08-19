@@ -17,6 +17,13 @@ DRY_RUN="${DRY_RUN:-0}"
 FORCE="${FORCE:-0}"
 RUN_FREQUENCY_CALIBRATION="${RUN_FREQUENCY_CALIBRATION:-0}"
 
+# TFRC is shared within each dataset. Deep Blending intentionally keeps the
+# previously validated scene-specific settings below.
+TFRC_MIP_SCALE="${TFRC_MIP_SCALE:-2.0}"
+TFRC_TNT_SCALE="${TFRC_TNT_SCALE:-2.0}"
+TFRC_DB_DRJOHNSON_SCALE="${TFRC_DB_DRJOHNSON_SCALE:-3.5}"
+TFRC_DB_PLAYROOM_SCALE="${TFRC_DB_PLAYROOM_SCALE:-1.5}"
+
 # safe_state() fixes the Python/Torch seed to 0. These variables also reduce
 # run-to-run differences in CUDA and Python hashing where supported.
 export PYTHONHASHSEED="${PYTHONHASHSEED:-0}"
@@ -169,14 +176,20 @@ render_and_evaluate() {
 
     if [[ "$RUN_FREQUENCY_CALIBRATION" == "1" ]]; then
         local calibration_mult="$mult"
-        local calibration_scale="2.0"
-        if [[ "$name" == "drjohnson" ]]; then
-            calibration_mult="0.6"
-            calibration_scale="3.5"
-        elif [[ "$name" == "playroom" ]]; then
-            calibration_mult="0.6"
-            calibration_scale="1.5"
-        fi
+        local calibration_scale="$TFRC_MIP_SCALE"
+        case "$name" in
+            train|truck)
+                calibration_scale="$TFRC_TNT_SCALE"
+                ;;
+            drjohnson)
+                calibration_mult="0.6"
+                calibration_scale="$TFRC_DB_DRJOHNSON_SCALE"
+                ;;
+            playroom)
+                calibration_mult="0.6"
+                calibration_scale="$TFRC_DB_PLAYROOM_SCALE"
+                ;;
+        esac
         run_logged "$log_file" "${PYTHON_CMD[@]}" render.py -m "$model" \
             --iteration "$ITERATIONS" --skip_train --mult "$calibration_mult" \
             --render_suffix _tfrc --frequency_calibration scalar \

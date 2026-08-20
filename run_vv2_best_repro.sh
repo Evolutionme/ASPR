@@ -15,7 +15,7 @@ OUT_ROOT="${1:-output/vv2_best_repro_$(date +%Y%m%d_%H%M%S)}"
 SCENES="${SCENES:-all}"
 DRY_RUN="${DRY_RUN:-0}"
 FORCE="${FORCE:-0}"
-RUN_FREQUENCY_CALIBRATION="${RUN_FREQUENCY_CALIBRATION:-0}"
+RUN_FREQUENCY_CALIBRATION="${RUN_FREQUENCY_CALIBRATION:-1}"
 
 # TFRC is shared within each dataset. Deep Blending intentionally keeps the
 # previously validated scene-specific settings below.
@@ -124,7 +124,8 @@ train_scene() {
     local name="$1"
     local source="$2"
     local images="$3"
-    shift 3
+    local mult="$4"
+    shift 4
     local model="$OUT_ROOT/$name"
     local log_file="$OUT_ROOT/logs/${name}.log"
     local point_cloud="$model/point_cloud/iteration_${ITERATIONS}/point_cloud.ply"
@@ -146,7 +147,8 @@ train_scene() {
     local command=("${PYTHON_CMD[@]}" train.py
         -s "$source" -m "$model" -i "$images" --eval
         --iterations "$ITERATIONS" --save_iterations "$ITERATIONS"
-        --checkpoint_iterations "$ITERATIONS" --densification_interval 100)
+        --checkpoint_iterations "$ITERATIONS" --densification_interval 100
+        --mult "$mult")
     command+=("$@")
     run_logged "$log_file" "${command[@]}"
 
@@ -213,7 +215,7 @@ run_one() {
     if ! scene_selected "$name"; then
         return 0
     fi
-    train_scene "$name" "$source" "$images" "$@"
+    train_scene "$name" "$source" "$images" "$mult" "$@"
     render_and_evaluate "$name" "$mult"
 }
 
@@ -221,10 +223,10 @@ printf 'Output root: %s\n' "$OUT_ROOT"
 printf 'Scenes: %s | iterations: %s | dry-run: %s | frequency calibration: %s\n' \
     "$SCENES" "$ITERATIONS" "$DRY_RUN" "$RUN_FREQUENCY_CALIBRATION"
 
-run_one bicycle /root/360_v2/bicycle images_4 0.5 \
-    --optimizer_type default --grad_abs_thresh 0.0004 "${APSR_MIP[@]}" "${DENSITY_DEFAULT[@]}"
-# run_one flowers /root/360_v2/flowers images_4 0.5 \
-#     --optimizer_type default --grad_abs_thresh 0.0004 "${APSR_MIP[@]}" "${DENSITY_DEFAULT[@]}"
+# run_one bicycle /root/360_v2/bicycle images_4 0.5 \
+#    --optimizer_type default --grad_abs_thresh 0.0004 "${APSR_MIP[@]}" "${DENSITY_DEFAULT[@]}"
+ run_one flowers /root/360_v2/flowers images_4 0.5 \
+     --optimizer_type default --grad_abs_thresh 0.0004 "${APSR_MIP[@]}" "${DENSITY_DEFAULT[@]}"
 # run_one garden /root/360_v2/garden images_4 0.5 \
 #     --optimizer_type default --highfeature_lr 0.02 --loss_thresh 0.06 \
 #     --grad_abs_thresh 0.0002 "${APSR_MIP[@]}" "${DENSITY_DEFAULT[@]}"

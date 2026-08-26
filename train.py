@@ -88,7 +88,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         gaussians.rl_controller.restore(torch.load(rl_controller_path))
 
     apsr_loss_fn = None
-    if getattr(opt, "lambda_apsr", 0.0) > 0 or getattr(opt, "lambda_apsr_density", 0.0) > 0:
+    if (
+        getattr(opt, "lambda_apsr", 0.0) > 0
+        or getattr(opt, "lambda_apsr_density", 0.0) > 0
+        or getattr(opt, "frequency_weight", 0.0) > 0
+    ):
         apsr_loss_fn = AdaptivePixelStructureRefinementLoss(
             mse_weight=opt.apsr_mse_weight,
             hard_mse_weight=opt.apsr_hard_mse_weight,
@@ -97,6 +101,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             structure_weight=opt.apsr_structure_weight,
             perceptual_weight=opt.apsr_perceptual_weight,
             color_weight=opt.apsr_color_weight,
+            frequency_weight=opt.frequency_weight,
+            frequency_kernel_size=opt.frequency_kernel_size,
+            frequency_band_weight=opt.frequency_band_weight,
+            frequency_high_ratio=opt.frequency_high_ratio,
+            frequency_gate_floor=opt.frequency_gate_floor,
+            frequency_gate_ceiling=opt.frequency_gate_ceiling,
             pyramid_levels=opt.apsr_pyramid_levels,
             max_side=opt.apsr_max_side,
         ).cuda()
@@ -246,12 +256,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 tb_writer.add_scalar('train_loss_patches/apsr_loss', apsr_loss.item(), iteration)
                 tb_writer.add_scalar('train_loss_patches/apsr_weight', apsr_weight, iteration)
                 if apsr_logs is not None:
-                    tb_writer.add_scalar('train_loss_patches/apsr_mse', apsr_logs["mse"].item(), iteration)
-                    tb_writer.add_scalar('train_loss_patches/apsr_hard_mse', apsr_logs["hard_mse"].item(), iteration)
-                    tb_writer.add_scalar('train_loss_patches/apsr_edge', apsr_logs["edge"].item(), iteration)
-                    tb_writer.add_scalar('train_loss_patches/apsr_structure', apsr_logs["structure"].item(), iteration)
-                    tb_writer.add_scalar('train_loss_patches/apsr_perceptual', apsr_logs["perceptual"].item(), iteration)
-                    tb_writer.add_scalar('train_loss_patches/apsr_color', apsr_logs["color"].item(), iteration)
+                    for name, value in apsr_logs.items():
+                        if torch.is_tensor(value):
+                            tb_writer.add_scalar(f'train_loss_patches/apsr_{name}', value.detach().mean().item(), iteration)
             if tb_writer and getattr(opt, "late_mse_weight", 0.0) > 0:
                 tb_writer.add_scalar('train_loss_patches/late_mse_loss', late_mse_loss.item(), iteration)
                 tb_writer.add_scalar('train_loss_patches/late_mse_weight', late_mse_weight, iteration)

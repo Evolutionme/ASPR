@@ -96,6 +96,12 @@ class OptimizationParams(ParamGroup):
         self.apsr_color_weight = 0.02
         self.apsr_pyramid_levels = 3
         self.apsr_max_side = 1024
+        self.frequency_weight = 0.0
+        self.frequency_kernel_size = 5
+        self.frequency_band_weight = 1.0
+        self.frequency_high_ratio = 0.45
+        self.frequency_gate_floor = 0.5
+        self.frequency_gate_ceiling = 1.5
         self.late_mse_weight = 0.0
         self.late_mse_start_iter = 15000
         self.late_mse_warmup_iters = 5000

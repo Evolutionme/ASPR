@@ -20,9 +20,13 @@ RUN_FREQUENCY_CALIBRATION="${RUN_FREQUENCY_CALIBRATION:-1}"
 # TFRC is shared within each dataset. Deep Blending intentionally keeps the
 # previously validated scene-specific settings below.
 TFRC_MIP_SCALE="${TFRC_MIP_SCALE:-2.0}"
+TFRC_MIP_KERNEL="${TFRC_MIP_KERNEL:-5}"
 TFRC_TNT_SCALE="${TFRC_TNT_SCALE:-2.0}"
+TFRC_TNT_KERNEL="${TFRC_TNT_KERNEL:-5}"
 TFRC_DB_DRJOHNSON_SCALE="${TFRC_DB_DRJOHNSON_SCALE:-3.5}"
+TFRC_DB_DRJOHNSON_KERNEL="${TFRC_DB_DRJOHNSON_KERNEL:-3}"
 TFRC_DB_PLAYROOM_SCALE="${TFRC_DB_PLAYROOM_SCALE:-1.5}"
+TFRC_DB_PLAYROOM_KERNEL="${TFRC_DB_PLAYROOM_KERNEL:-3}"
 
 # safe_state() fixes the Python/Torch seed to 0. These variables also reduce
 # run-to-run differences in CUDA and Python hashing where supported.
@@ -36,26 +40,36 @@ APSR_MIP=(
     --lambda_apsr 0.35 --apsr_hard_mse_weight 0.5 --apsr_edge_weight 0.08
     --apsr_structure_weight 0.12 --apsr_perceptual_weight 0.05
     --apsr_color_weight 0.02 --apsr_pyramid_levels 3
+    --frequency_weight 0.08 --frequency_kernel_size 5
+    --frequency_band_weight 1.0 --frequency_high_ratio 0.42
 )
 APSR_MIP_PSNR=(
     --lambda_apsr 0.35 --apsr_hard_mse_weight 0.65 --apsr_edge_weight 0.08
     --apsr_structure_weight 0.10 --apsr_perceptual_weight 0.05
     --apsr_color_weight 0.02 --apsr_pyramid_levels 3
+    --frequency_weight 0.08 --frequency_kernel_size 5
+    --frequency_band_weight 1.0 --frequency_high_ratio 0.42
 )
 APSR_TNT=(
-    --lambda_apsr 0.35 --apsr_hard_mse_weight 0.5 --apsr_edge_weight 0.08
-    --apsr_structure_weight 0.12 --apsr_perceptual_weight 0.05
+    --lambda_apsr 0.38 --apsr_hard_mse_weight 0.6 --apsr_edge_weight 0.08
+    --apsr_structure_weight 0.10 --apsr_perceptual_weight 0.05
     --apsr_color_weight 0.02 --apsr_pyramid_levels 3
+    --frequency_weight 0.10 --frequency_kernel_size 5
+    --frequency_band_weight 1.15 --frequency_high_ratio 0.40
 )
 APSR_DB=(
-    --lambda_apsr 0.35 --apsr_hard_mse_weight 0.3 --apsr_edge_weight 0.06
-    --apsr_structure_weight 0.08 --apsr_perceptual_weight 0.025
+    --lambda_apsr 0.32 --apsr_hard_mse_weight 0.3 --apsr_edge_weight 0.06
+    --apsr_structure_weight 0.08 --apsr_perceptual_weight 0.03
     --apsr_color_weight 0.01 --apsr_pyramid_levels 2
+    --frequency_weight 0.05 --frequency_kernel_size 3
+    --frequency_band_weight 0.75 --frequency_high_ratio 0.35
 )
 APSR_DENSITY_WEAK=(
-    --lambda_apsr 0.0 --apsr_hard_mse_weight 0.3 --apsr_edge_weight 0.06
-    --apsr_structure_weight 0.08 --apsr_perceptual_weight 0.025
+    --lambda_apsr 0.20 --apsr_hard_mse_weight 0.3 --apsr_edge_weight 0.06
+    --apsr_structure_weight 0.08 --apsr_perceptual_weight 0.03
     --apsr_color_weight 0.01 --apsr_pyramid_levels 2
+    --frequency_weight 0.05 --frequency_kernel_size 3
+    --frequency_band_weight 0.75 --frequency_high_ratio 0.35
 )
 
 DENSITY_DEFAULT=(
@@ -69,24 +83,24 @@ DENSITY_DEFAULT=(
     --apsr_density_prune_scale 1.0 --apsr_density_log_interval 100
 )
 DENSITY_CONSERVATIVE=(
-    --use_apsr_density_control 1 --lambda_apsr_density 0.10
+    --use_apsr_density_control 1 --lambda_apsr_density 0.12
     --apsr_density_start_iter 1500 --apsr_density_warmup_iters 3000
     --apsr_density_map_clamp 6.0 --apsr_density_use_state 1
-    --apsr_density_state_weight 0.25 --apsr_density_use_contribution_gate 1
+    --apsr_density_state_weight 0.35 --apsr_density_use_contribution_gate 1
     --apsr_density_gate_temperature 1.0 --apsr_density_gate_floor 0.0
     --apsr_density_use_corr_gate 1 --apsr_density_corr_gate_floor 0.1
     --apsr_density_use_reward 0 --apsr_density_reward_weight 0.05
     --apsr_density_prune_scale 1.0 --apsr_density_log_interval 100
 )
 DENSITY_TRUCK=(
-    --use_apsr_density_control 1 --lambda_apsr_density 0.30
+    --use_apsr_density_control 1 --lambda_apsr_density 0.22
     --apsr_density_start_iter 1500 --apsr_density_warmup_iters 3000
     --apsr_density_map_clamp 6.0 --apsr_density_use_state 1
-    --apsr_density_state_weight 0.75 --apsr_density_use_contribution_gate 1
+    --apsr_density_state_weight 0.65 --apsr_density_use_contribution_gate 1
     --apsr_density_gate_temperature 1.0 --apsr_density_gate_floor 0.0
     --apsr_density_use_corr_gate 1 --apsr_density_corr_gate_floor 0.1
     --apsr_density_use_reward 0 --apsr_density_reward_weight 0.05
-    --apsr_density_prune_scale 1.0 --apsr_density_log_interval 100
+    --apsr_density_prune_scale 0.95 --apsr_density_log_interval 100
 )
 
 mkdir -p "$OUT_ROOT/logs"
@@ -179,23 +193,27 @@ render_and_evaluate() {
     if [[ "$RUN_FREQUENCY_CALIBRATION" == "1" ]]; then
         local calibration_mult="$mult"
         local calibration_scale="$TFRC_MIP_SCALE"
+        local calibration_kernel="$TFRC_MIP_KERNEL"
         case "$name" in
             train|truck)
                 calibration_scale="$TFRC_TNT_SCALE"
+                calibration_kernel="$TFRC_TNT_KERNEL"
                 ;;
             drjohnson)
                 calibration_mult="0.6"
                 calibration_scale="$TFRC_DB_DRJOHNSON_SCALE"
+                calibration_kernel="$TFRC_DB_DRJOHNSON_KERNEL"
                 ;;
             playroom)
                 calibration_mult="0.6"
                 calibration_scale="$TFRC_DB_PLAYROOM_SCALE"
+                calibration_kernel="$TFRC_DB_PLAYROOM_KERNEL"
                 ;;
         esac
         run_logged "$log_file" "${PYTHON_CMD[@]}" render.py -m "$model" \
             --iteration "$ITERATIONS" --skip_train --mult "$calibration_mult" \
             --render_suffix _tfrc --frequency_calibration scalar \
-            --frequency_calibration_views 32 --frequency_kernel_size 3 \
+            --frequency_calibration_views 32 --frequency_kernel_size "$calibration_kernel" \
             --frequency_coefficient_scale "$calibration_scale"
         local calibrated_method="$model/test/ours_${ITERATIONS}_tfrc"
         run_logged "$log_file" "${PYTHON_CMD[@]}" metrics.py -m "$calibrated_method"

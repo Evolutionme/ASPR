@@ -34,19 +34,19 @@ grad_thresh = {
 }
 
 special_args = {
-    "bicycle": "",
-    "flowers": " --dense 0.005 ",
-    "garden": " --highfeature_lr 0.02 --loss_thresh 0.06 ",
-    "stump": " --dense 0.004 ",
-    "treehill": " --dense 0.01 ",
-    "room": " --highfeature_lr 0.02 ",
-    "counter": " --highfeature_lr 0.02 ",
-    "kitchen": " --highfeature_lr 0.02 ",
-    "bonsai": " --highfeature_lr 0.02 ",
-    "truck": " --highfeature_lr 0.04 ",
-    "train": " --highfeature_lr 0.042 --dense 0.015 ",
-    "playroom": " --highfeature_lr 0.0025 --dense 0.005 ",
-    "drjohnson": " --highfeature_lr 0.0015 --dense 0.003 "
+    "bicycle": " --lambda_apsr 0.35 --apsr_hard_mse_weight 0.5 --apsr_edge_weight 0.08 --apsr_structure_weight 0.12 --apsr_perceptual_weight 0.05 --apsr_color_weight 0.02 --apsr_pyramid_levels 3 --frequency_weight 0.08 --frequency_kernel_size 5 --frequency_band_weight 1.0 --frequency_high_ratio 0.42 ",
+    "flowers": " --dense 0.005  --lambda_apsr 0.35 --apsr_hard_mse_weight 0.5 --apsr_edge_weight 0.08 --apsr_structure_weight 0.12 --apsr_perceptual_weight 0.05 --apsr_color_weight 0.02 --apsr_pyramid_levels 3 --frequency_weight 0.08 --frequency_kernel_size 5 --frequency_band_weight 1.0 --frequency_high_ratio 0.42 ",
+    "garden": " --highfeature_lr 0.02 --loss_thresh 0.06  --lambda_apsr 0.35 --apsr_hard_mse_weight 0.5 --apsr_edge_weight 0.08 --apsr_structure_weight 0.12 --apsr_perceptual_weight 0.05 --apsr_color_weight 0.02 --apsr_pyramid_levels 3 --frequency_weight 0.08 --frequency_kernel_size 5 --frequency_band_weight 1.0 --frequency_high_ratio 0.42 ",
+    "stump": " --dense 0.004  --lambda_apsr 0.35 --apsr_hard_mse_weight 0.5 --apsr_edge_weight 0.08 --apsr_structure_weight 0.12 --apsr_perceptual_weight 0.05 --apsr_color_weight 0.02 --apsr_pyramid_levels 3 --frequency_weight 0.08 --frequency_kernel_size 5 --frequency_band_weight 1.0 --frequency_high_ratio 0.42 ",
+    "treehill": " --dense 0.01  --lambda_apsr 0.35 --apsr_hard_mse_weight 0.5 --apsr_edge_weight 0.08 --apsr_structure_weight 0.12 --apsr_perceptual_weight 0.05 --apsr_color_weight 0.02 --apsr_pyramid_levels 3 --frequency_weight 0.08 --frequency_kernel_size 5 --frequency_band_weight 1.0 --frequency_high_ratio 0.42 ",
+    "room": " --highfeature_lr 0.02  --lambda_apsr 0.35 --apsr_hard_mse_weight 0.5 --apsr_edge_weight 0.08 --apsr_structure_weight 0.12 --apsr_perceptual_weight 0.05 --apsr_color_weight 0.02 --apsr_pyramid_levels 3 --frequency_weight 0.08 --frequency_kernel_size 5 --frequency_band_weight 1.0 --frequency_high_ratio 0.42 ",
+    "counter": " --highfeature_lr 0.02  --lambda_apsr 0.35 --apsr_hard_mse_weight 0.5 --apsr_edge_weight 0.08 --apsr_structure_weight 0.12 --apsr_perceptual_weight 0.05 --apsr_color_weight 0.02 --apsr_pyramid_levels 3 --frequency_weight 0.08 --frequency_kernel_size 5 --frequency_band_weight 1.0 --frequency_high_ratio 0.42 ",
+    "kitchen": " --highfeature_lr 0.02  --lambda_apsr 0.35 --apsr_hard_mse_weight 0.5 --apsr_edge_weight 0.08 --apsr_structure_weight 0.12 --apsr_perceptual_weight 0.05 --apsr_color_weight 0.02 --apsr_pyramid_levels 3 --frequency_weight 0.08 --frequency_kernel_size 5 --frequency_band_weight 1.0 --frequency_high_ratio 0.42 ",
+    "bonsai": " --highfeature_lr 0.02  --lambda_apsr 0.35 --apsr_hard_mse_weight 0.5 --apsr_edge_weight 0.08 --apsr_structure_weight 0.12 --apsr_perceptual_weight 0.05 --apsr_color_weight 0.02 --apsr_pyramid_levels 3 --frequency_weight 0.08 --frequency_kernel_size 5 --frequency_band_weight 1.0 --frequency_high_ratio 0.42 ",
+    "truck": " --highfeature_lr 0.04  --lambda_apsr 0.38 --apsr_hard_mse_weight 0.6 --apsr_edge_weight 0.08 --apsr_structure_weight 0.10 --apsr_perceptual_weight 0.05 --apsr_color_weight 0.02 --apsr_pyramid_levels 3 --frequency_weight 0.10 --frequency_kernel_size 5 --frequency_band_weight 1.15 --frequency_high_ratio 0.40 ",
+    "train": " --highfeature_lr 0.042 --dense 0.015  --lambda_apsr 0.38 --apsr_hard_mse_weight 0.6 --apsr_edge_weight 0.08 --apsr_structure_weight 0.10 --apsr_perceptual_weight 0.05 --apsr_color_weight 0.02 --apsr_pyramid_levels 3 --frequency_weight 0.10 --frequency_kernel_size 5 --frequency_band_weight 1.15 --frequency_high_ratio 0.40 ",
+    "playroom": " --highfeature_lr 0.0025 --dense 0.005  --lambda_apsr 0.32 --apsr_hard_mse_weight 0.3 --apsr_edge_weight 0.06 --apsr_structure_weight 0.08 --apsr_perceptual_weight 0.03 --apsr_color_weight 0.01 --apsr_pyramid_levels 2 --frequency_weight 0.05 --frequency_kernel_size 3 --frequency_band_weight 0.75 --frequency_high_ratio 0.35 ",
+    "drjohnson": " --highfeature_lr 0.0015 --dense 0.003  --lambda_apsr 0.32 --apsr_hard_mse_weight 0.3 --apsr_edge_weight 0.06 --apsr_structure_weight 0.08 --apsr_perceptual_weight 0.03 --apsr_color_weight 0.01 --apsr_pyramid_levels 2 --frequency_weight 0.05 --frequency_kernel_size 3 --frequency_band_weight 0.75 --frequency_high_ratio 0.35 "
 }
 
 parser = ArgumentParser(description="Full evaluation script parameters")

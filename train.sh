@@ -1,11 +1,11 @@
 #APSR_ARGS="--lambda_apsr 0.5 --apsr_hard_mse_weight 0.8 --apsr_edge_weight 0.1"
 # APSR_ARGS="--lambda_apsr 0"
 #APSR_ARGS="--lambda_apsr 0 --late_mse_weight 0.25 --late_mse_start_iter 15000 --late_mse_warmup_iters 5000 --main_optimizer_interval 1 --sh_optimizer_interval 1"
-APSR_Mip360="--lambda_apsr 0.35 --apsr_hard_mse_weight 0.5 --apsr_edge_weight 0.08 --apsr_structure_weight 0.12 --apsr_perceptual_weight 0.05 --apsr_color_weight 0.02 --apsr_pyramid_levels 3"
+APSR_Mip360="--lambda_apsr 0.35 --apsr_hard_mse_weight 0.5 --apsr_edge_weight 0.08 --apsr_structure_weight 0.12 --apsr_perceptual_weight 0.05 --apsr_color_weight 0.02 --apsr_pyramid_levels 3 --frequency_weight 0.08 --frequency_kernel_size 5 --frequency_band_weight 1.0 --frequency_high_ratio 0.42"
 
-APSR_TanksandTemple="--lambda_apsr 0.35 --apsr_hard_mse_weight 0.5 --apsr_edge_weight 0.08 --apsr_structure_weight 0.12 --apsr_perceptual_weight 0.05 --apsr_color_weight 0.02 --apsr_pyramid_levels 3"
+APSR_TanksandTemple="--lambda_apsr 0.38 --apsr_hard_mse_weight 0.6 --apsr_edge_weight 0.08 --apsr_structure_weight 0.10 --apsr_perceptual_weight 0.05 --apsr_color_weight 0.02 --apsr_pyramid_levels 3 --frequency_weight 0.10 --frequency_kernel_size 5 --frequency_band_weight 1.15 --frequency_high_ratio 0.40"
 
-APSR_DeepBlending="--lambda_apsr 0.35 --apsr_hard_mse_weight 0.3 --apsr_edge_weight 0.06 --apsr_structure_weight 0.08 --apsr_perceptual_weight 0.025 --apsr_color_weight 0.01 --apsr_pyramid_levels 2"
+APSR_DeepBlending="--lambda_apsr 0.32 --apsr_hard_mse_weight 0.3 --apsr_edge_weight 0.06 --apsr_structure_weight 0.08 --apsr_perceptual_weight 0.03 --apsr_color_weight 0.01 --apsr_pyramid_levels 2 --frequency_weight 0.05 --frequency_kernel_size 3 --frequency_band_weight 0.75 --frequency_high_ratio 0.35"
 #APSR_DeepBlending="--lambda_apsr 0.35 --apsr_hard_mse_weight 0.2 --apsr_edge_weight 0.06 --apsr_structure_weight 0.1 --apsr_perceptual_weight 0.03 --apsr_color_weight 0.01 --apsr_pyramid_levels 3"
 #APSR_ARGS="--lambda_apsr 0.35 --apsr_hard_mse_weight 0.3 --apsr_edge_weight 0.06 --apsr_structure_weight 0.08 --apsr_perceptual_weight 0.025 --apsr_color_weight 0.01 --apsr_pyramid_levels 2"
 # echo "mipnerf开始时间: $(date '+%Y-%m-%d %H:%M:%S')"

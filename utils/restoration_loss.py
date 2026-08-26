@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from utils.frequency_calibration import split_low_detail
+
 
 class CharbonnierLoss(nn.Module):
     def __init__(self, eps=1e-3):
@@ -118,7 +120,10 @@ class AdaptivePixelStructureRefinementLoss(nn.Module):
 
     def __init__(self, mse_weight=1.0, hard_mse_weight=0.5, hard_gamma=1.0,
                  edge_weight=0.08, structure_weight=0.12, perceptual_weight=0.05,
-                 color_weight=0.02, pyramid_levels=3, max_side=1024, eps=1e-6):
+                 color_weight=0.02, frequency_weight=0.0, frequency_kernel_size=5,
+                 frequency_band_weight=1.0, frequency_high_ratio=0.45,
+                 frequency_gate_floor=0.5, frequency_gate_ceiling=1.5,
+                 pyramid_levels=3, max_side=1024, eps=1e-6):
         super().__init__()
         self.mse_weight = mse_weight
         self.hard_mse_weight = hard_mse_weight
@@ -127,11 +132,20 @@ class AdaptivePixelStructureRefinementLoss(nn.Module):
         self.structure_weight = structure_weight
         self.perceptual_weight = perceptual_weight
         self.color_weight = color_weight
+        self.frequency_weight = frequency_weight
+        self.frequency_kernel_size = max(int(frequency_kernel_size), 3)
+        if self.frequency_kernel_size % 2 == 0:
+            self.frequency_kernel_size += 1
+        self.frequency_band_weight = frequency_band_weight
+        self.frequency_high_ratio = float(frequency_high_ratio)
+        self.frequency_gate_floor = float(frequency_gate_floor)
+        self.frequency_gate_ceiling = float(frequency_gate_ceiling)
         self.max_side = max_side
         self.eps = eps
         self.edge_loss = LaplacianEdgeLoss(pyramid_levels)
         self.structure_loss = MultiScaleStructureLoss(pyramid_levels)
         self.perceptual_loss = PerceptualPyramidLoss(pyramid_levels)
+        self._frequency_mask_cache = {}
 
     def forward(self, pred, target):
         pred, target = self._prepare_pair(pred, target)
@@ -144,14 +158,31 @@ class AdaptivePixelStructureRefinementLoss(nn.Module):
         structure_loss = self.structure_loss(detail_pred, detail_target)
         perceptual_loss = self.perceptual_loss(detail_pred, detail_target)
         color_loss = self._color_loss(pred, target)
+        frequency_loss = pred.new_zeros(())
+        frequency_detail_loss = pred.new_zeros(())
+        frequency_fft_loss = pred.new_zeros(())
+        frequency_gate = pred.new_ones(())
+        frequency_stability = pred.new_zeros(())
+        if self.frequency_weight > 0:
+            frequency_loss, frequency_logs = self._frequency_loss(detail_pred, detail_target)
+            frequency_detail_loss = frequency_logs["frequency_detail"]
+            frequency_fft_loss = frequency_logs["frequency_fft"]
+            frequency_gate = frequency_logs["frequency_gate"]
+            frequency_stability = frequency_logs["frequency_stability"]
 
         total = (self.mse_weight * mse_loss + self.hard_mse_weight * hard_mse_loss
                  + self.edge_weight * edge_loss + self.structure_weight * structure_loss
-                 + self.perceptual_weight * perceptual_loss + self.color_weight * color_loss)
+                 + self.perceptual_weight * perceptual_loss + self.color_weight * color_loss
+                 + self.frequency_weight * frequency_loss)
         return total, {
             "mse": mse_loss.detach(), "hard_mse": hard_mse_loss.detach(),
             "edge": edge_loss.detach(), "structure": structure_loss.detach(),
             "perceptual": perceptual_loss.detach(), "color": color_loss.detach(),
+            "frequency": frequency_loss.detach(),
+            "frequency_detail": frequency_detail_loss.detach(),
+            "frequency_fft": frequency_fft_loss.detach(),
+            "frequency_gate": frequency_gate.detach(),
+            "frequency_stability": frequency_stability.detach(),
         }
 
     @torch.no_grad()
@@ -171,6 +202,7 @@ class AdaptivePixelStructureRefinementLoss(nn.Module):
             + self.structure_weight * self._normalize_map(maps["structure"], clamp_max)
             + self.perceptual_weight * self._normalize_map(maps["perceptual"], clamp_max)
             + self.color_weight * self._normalize_map(maps["color"], clamp_max)
+            + self.frequency_weight * self._normalize_map(maps["frequency"], clamp_max)
         )
         density = self._normalize_map(density, clamp_max)
 
@@ -195,6 +227,10 @@ class AdaptivePixelStructureRefinementLoss(nn.Module):
         structure_map = self._multi_scale_map(pred, target, self._structure_map)
         perceptual_map = self._multi_scale_map(pred, target, self._perceptual_map)
         color_map = self._color_map(pred, target)
+        if self.frequency_weight > 0:
+            frequency_map = self._multi_scale_map(pred, target, self._frequency_map)
+        else:
+            frequency_map = pred.new_zeros((pred.shape[0], 1, *pred.shape[-2:]))
 
         return {
             "mse": mse_map,
@@ -203,6 +239,7 @@ class AdaptivePixelStructureRefinementLoss(nn.Module):
             "structure": structure_map,
             "perceptual": perceptual_map,
             "color": color_map,
+            "frequency": frequency_map,
         }
 
     def _prepare_pair(self, pred, target):
@@ -267,6 +304,70 @@ class AdaptivePixelStructureRefinementLoss(nn.Module):
             pred = F.avg_pool2d(pred, 2, 2)
             target = F.avg_pool2d(target, 2, 2)
         return total / max(weight_sum, self.eps)
+
+    def _frequency_loss(self, pred, target):
+        pred = pred.float()
+        target = target.float()
+        pred_low, pred_detail = split_low_detail(pred, self.frequency_kernel_size)
+        target_low, target_detail = split_low_detail(target, self.frequency_kernel_size)
+
+        detail_residual = torch.sqrt((pred_detail - target_detail).square() + self.eps ** 2)
+        detail_loss = detail_residual.mean()
+
+        pred_fft = torch.fft.rfft2(pred, norm="ortho")
+        target_fft = torch.fft.rfft2(target, norm="ortho")
+        mask = self._frequency_mask(pred.shape[-2:], pred.device, pred.dtype)
+        fft_loss = ((pred_fft - target_fft).abs() * mask).mean()
+
+        stability = self._frequency_stability(target_low, target_detail)
+        gate = self._frequency_gate(stability)
+        frequency_loss = gate * (0.5 * detail_loss + 0.5 * fft_loss)
+        return frequency_loss, {
+            "frequency_detail": detail_loss.detach(),
+            "frequency_fft": fft_loss.detach(),
+            "frequency_gate": gate.detach(),
+            "frequency_stability": stability.detach(),
+        }
+
+    def _frequency_map(self, pred, target):
+        pred = pred.float()
+        target = target.float()
+        pred_low, pred_detail = split_low_detail(pred, self.frequency_kernel_size)
+        target_low, target_detail = split_low_detail(target, self.frequency_kernel_size)
+
+        frequency_map = torch.sqrt((pred_detail - target_detail).square() + self.eps ** 2).mean(dim=1, keepdim=True)
+        stability = self._frequency_stability(target_low, target_detail)
+        return frequency_map * self._frequency_gate(stability)
+
+    def _frequency_stability(self, target_low, target_detail):
+        low_energy = target_low.abs().mean(dim=(1, 2, 3), keepdim=True).clamp_min(self.eps)
+        detail_energy = target_detail.abs().mean(dim=(1, 2, 3), keepdim=True)
+        stability = detail_energy / (detail_energy + low_energy + self.eps)
+        return stability
+
+    def _frequency_gate(self, stability):
+        gate = self.frequency_gate_floor + (
+            self.frequency_gate_ceiling - self.frequency_gate_floor
+        ) * stability.clamp(0.0, 1.0)
+        return gate.mean()
+
+    def _frequency_mask(self, shape, device, dtype):
+        height, width = shape
+        cache_key = (int(height), int(width), str(device), str(dtype))
+        mask = self._frequency_mask_cache.get(cache_key)
+        if mask is not None:
+            return mask
+
+        fy = torch.fft.fftfreq(height, d=1.0, device=device).to(dtype=dtype)
+        fx = torch.fft.rfftfreq(width, d=1.0, device=device).to(dtype=dtype)
+        radius = torch.sqrt(fy[:, None].square() + fx[None, :].square())
+        radius = radius / radius.max().clamp_min(self.eps)
+        high_ratio = min(max(self.frequency_high_ratio, 0.0), 1.0)
+        high_band = (radius - high_ratio).clamp_min(0.0) / max(1.0 - high_ratio, self.eps)
+        mask = 1.0 + self.frequency_band_weight * high_band.square()
+        mask = mask.to(dtype=torch.float32)
+        self._frequency_mask_cache[cache_key] = mask
+        return mask
 
     def _edge_map(self, pred, target):
         edge_pred = self.edge_loss._laplacian(pred)

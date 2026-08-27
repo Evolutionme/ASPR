@@ -585,14 +585,45 @@ class GaussianModel:
             tb_writer.add_scalar("rl/action_split_ratio", split_ratio, iteration)
             tb_writer.add_scalar("rl/action_delete_ratio", delete_ratio, iteration)
 
-            if bool(getattr(args, "use_apsr_density_control", 0)) and bool(getattr(args, "apsr_density_use_state", 1)) and gaussians_state_for_rl.shape[-1] > args.rl_state_dim:
-                apsr_state = gaussians_state_for_rl[:, -1].detach()
+            apsr_state_enabled = (
+                bool(getattr(args, "use_apsr_density_control", 0))
+                and bool(getattr(args, "apsr_density_use_state", 1))
+                and getattr(args, "lambda_apsr_density", 0.0) > 0
+            )
+            sfr_state_enabled = (
+                bool(getattr(args, "sfr_aux_enable", 0))
+                and bool(getattr(args, "sfr_aux_use_state", 1))
+            )
+            if apsr_state_enabled and gaussians_state_for_rl.shape[-1] > args.rl_state_dim:
+                apsr_state = gaussians_state_for_rl[:, args.rl_state_dim].detach()
                 if valid_mask.any():
-                    tb_writer.add_scalar("rl_apsr_state/valid_mean", apsr_state[valid_mask].mean().item(), iteration)
+                    tb_writer.add_scalar(
+                        "rl_apsr_state/valid_mean",
+                        apsr_state[valid_mask].mean().item(),
+                        iteration,
+                    )
                 for action_id, action_name in ((0, "keep"), (1, "clone"), (2, "split"), (3, "delete")):
                     action_mask = action == action_id
                     if action_mask.any():
                         tb_writer.add_scalar(f"rl_apsr_state/{action_name}_mean", apsr_state[action_mask].mean().item(), iteration)
+            if sfr_state_enabled:
+                sfr_index = args.rl_state_dim + (1 if apsr_state_enabled else 0)
+                if gaussians_state_for_rl.shape[-1] > sfr_index:
+                    sfr_state = gaussians_state_for_rl[:, sfr_index].detach()
+                    if valid_mask.any():
+                        tb_writer.add_scalar(
+                            "rl_sfr_state/valid_mean",
+                            sfr_state[valid_mask].mean().item(),
+                            iteration,
+                        )
+                    for action_id, action_name in ((0, "keep"), (1, "clone"), (2, "split"), (3, "delete")):
+                        action_mask = action == action_id
+                        if action_mask.any():
+                            tb_writer.add_scalar(
+                                f"rl_sfr_state/{action_name}_mean",
+                                sfr_state[action_mask].mean().item(),
+                                iteration,
+                            )
 
         clone_action_mask = action == 1
         split_action_mask = action == 2

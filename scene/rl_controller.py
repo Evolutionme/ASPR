@@ -65,6 +65,33 @@ class APSRResidualStateEncoder(nn.Module):
         return base_encoded + adapter_output
 
 
+class SFRResidualStateEncoder(nn.Module):
+    """Keep all existing state features in the LeGS encoder.
+
+    The new SFR feature enters through a zero-initialized residual adapter, so
+    enabling the auxiliary signal does not cause an abrupt policy shift.
+    """
+
+    def __init__(self, base_input_dim=11, hidden_dim=64, adapter_scale=1.0):
+        super().__init__()
+        self.base_input_dim = base_input_dim
+        self.base_encoder = MLPStateEncoder(base_input_dim, hidden_dim)
+        self.sfr_adapter = nn.Linear(1, hidden_dim, bias=False)
+        nn.init.zeros_(self.sfr_adapter.weight)
+        self.adapter_scale = float(adapter_scale)
+        self.last_adapter_abs_mean = 0.0
+        self.last_base_abs_mean = 0.0
+
+    def forward(self, state_features, xyz_coords=None):
+        base_encoded = self.base_encoder(state_features[:, :self.base_input_dim])
+        sfr_state = state_features[:, self.base_input_dim:self.base_input_dim + 1]
+        adapter_output = self.sfr_adapter(sfr_state) * self.adapter_scale
+
+        self.last_adapter_abs_mean = adapter_output.detach().abs().mean().item()
+        self.last_base_abs_mean = base_encoded.detach().abs().mean().item()
+        return base_encoded + adapter_output
+
+
 class PPOActor(nn.Module):
     """
     PPO策略网络 - 输出动作概率分布
@@ -178,9 +205,17 @@ class GaussianDensificationController:
             and bool(getattr(training_args, "apsr_density_use_state", 1))
             and getattr(training_args, "lambda_apsr_density", 0.0) > 0
         )
+        sfr_state_enabled = (
+            bool(getattr(training_args, "sfr_aux_enable", 0))
+            and bool(getattr(training_args, "sfr_aux_use_state", 1))
+        )
         use_apsr_residual_adapter = (
             apsr_state_enabled
             and bool(getattr(training_args, "apsr_density_use_residual_adapter", 0))
+        )
+        use_sfr_residual_adapter = (
+            sfr_state_enabled
+            and bool(getattr(training_args, "sfr_aux_use_residual_adapter", 1))
         )
         hidden_dim = training_args.rl_net_hidden_dim
 
@@ -193,7 +228,15 @@ class GaussianDensificationController:
 
         if not self.use_my_value:
             self.critic = PPOCritic(hidden_dim).to(device)
-        if use_apsr_residual_adapter:
+        if use_sfr_residual_adapter:
+            # The SFR feature is appended after the pre-existing state
+            # features, including APSR when that branch is enabled.
+            self.state_encoder = SFRResidualStateEncoder(
+                state_dim + (1 if apsr_state_enabled else 0),
+                hidden_dim,
+                adapter_scale=getattr(training_args, "sfr_aux_adapter_scale", 1.0),
+            ).to(device)
+        elif use_apsr_residual_adapter:
             self.state_encoder = APSRResidualStateEncoder(
                 state_dim,
                 hidden_dim,
@@ -201,6 +244,8 @@ class GaussianDensificationController:
             ).to(device)
         else:
             if apsr_state_enabled:
+                state_dim += 1
+            if sfr_state_enabled:
                 state_dim += 1
             self.state_encoder = MLPStateEncoder(state_dim, hidden_dim).to(device)
 
@@ -596,6 +641,21 @@ class GaussianDensificationController:
                 tb_writer.add_scalar(
                     "rl_apsr_adapter/weight_norm",
                     self.state_encoder.apsr_adapter.weight.detach().norm().item(),
+                    iteration,
+                )
+            if isinstance(self.state_encoder, SFRResidualStateEncoder):
+                adapter_abs = self.state_encoder.last_adapter_abs_mean
+                base_abs = self.state_encoder.last_base_abs_mean
+                tb_writer.add_scalar("rl_sfr_adapter/output_abs_mean", adapter_abs, iteration)
+                tb_writer.add_scalar("rl_sfr_adapter/base_abs_mean", base_abs, iteration)
+                tb_writer.add_scalar(
+                    "rl_sfr_adapter/output_to_base_ratio",
+                    adapter_abs / max(base_abs, 1e-8),
+                    iteration,
+                )
+                tb_writer.add_scalar(
+                    "rl_sfr_adapter/weight_norm",
+                    self.state_encoder.sfr_adapter.weight.detach().norm().item(),
                     iteration,
                 )
 

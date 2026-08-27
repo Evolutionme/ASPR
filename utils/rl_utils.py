@@ -1,10 +1,12 @@
 import torch
+import torch.nn.functional as F
 from fused_ssim import FusedSSIMMap
 from fused_ssim import fused_ssim as fast_ssim
 from utils.image_utils import psnr
 
 from gaussian_renderer import render_fastgs
 from utils.loss_utils import l1_loss
+from utils.frequency_calibration import split_low_detail
 
 
 def fast_ssim_map(img1, img2, padding="same", train=True):
@@ -43,6 +45,101 @@ def _apsr_density_state_enabled(opt):
         and bool(getattr(opt, "apsr_density_use_state", 1))
         and getattr(opt, "lambda_apsr_density", 0.0) > 0
     )
+
+
+def _sfr_aux_state_enabled(opt):
+    return (
+        bool(getattr(opt, "sfr_aux_enable", 0))
+        and bool(getattr(opt, "sfr_aux_use_state", 1))
+    )
+
+
+def _sfr_aux_active(opt, iteration=None):
+    if not _sfr_aux_state_enabled(opt):
+        return False
+    if iteration is not None and iteration < getattr(opt, "sfr_aux_start_iter", 0):
+        return False
+    return True
+
+
+def _sfr_aux_ramp(opt, iteration=None):
+    if iteration is None:
+        return 1.0
+    start_iter = int(getattr(opt, "sfr_aux_start_iter", 0))
+    ramp_iters = int(getattr(opt, "sfr_aux_ramp_iters", 0))
+    if iteration < start_iter:
+        return 0.0
+    if ramp_iters <= 0:
+        return 1.0
+    return min(float(iteration - start_iter + 1) / ramp_iters, 1.0)
+
+
+def _normalize_aux_map(value, clamp_max=6.0, eps=1e-6):
+    value = torch.nan_to_num(value.float(), nan=0.0, posinf=0.0, neginf=0.0).clamp_min(0.0)
+    mean = value.mean(dim=(-2, -1), keepdim=True).clamp_min(eps)
+    value = value / mean
+    if clamp_max and clamp_max > 0:
+        value = value.clamp(max=float(clamp_max))
+    return value
+
+
+@torch.no_grad()
+def _build_sfr_aux_metric_map(render_image, gt_image, opt, iteration=None):
+    """Build a detached SFR signal for RL density control.
+
+    The signal follows the useful part of SFR-GS: high-frequency residuals
+    receive more attention at strong spatial transitions.  It is deliberately
+    used only as a state feature, never added to the reconstruction loss.
+    """
+    if not _sfr_aux_active(opt, iteration):
+        return None, None
+
+    pred = render_image.float().unsqueeze(0) if render_image.dim() == 3 else render_image.float()
+    target = gt_image.float().unsqueeze(0) if gt_image.dim() == 3 else gt_image.float()
+    if pred.shape != target.shape:
+        raise ValueError(f"SFR auxiliary map expects matched shapes, got {pred.shape} and {target.shape}")
+
+    kernel_size = max(int(getattr(opt, "sfr_aux_kernel_size", 5)), 3)
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    _, pred_detail = split_low_detail(pred, kernel_size)
+    _, target_detail = split_low_detail(target, kernel_size)
+    detail_residual = torch.sqrt(
+        (pred_detail - target_detail).square() + 1e-6
+    ).mean(dim=1, keepdim=True)
+
+    # Use the target gradient as a stable spatial prior instead of amplifying
+    # transient render noise during early densification.
+    luminance = (
+        0.299 * target[:, 0:1]
+        + 0.587 * target[:, 1:2]
+        + 0.114 * target[:, 2:3]
+    )
+    grad_x = F.pad(luminance[:, :, :, 1:] - luminance[:, :, :, :-1], (0, 1, 0, 0))
+    grad_y = F.pad(luminance[:, :, 1:, :] - luminance[:, :, :-1, :], (0, 0, 0, 1))
+    gradient = torch.sqrt(grad_x.square() + grad_y.square() + 1e-6)
+    gradient = _normalize_aux_map(gradient, clamp_max=2.0)
+
+    rho = _sfr_aux_ramp(opt, iteration)
+    tau = max(float(getattr(opt, "sfr_aux_tau", 0.5)), 0.0)
+    spatial_weight = 1.0 + tau * rho * gradient
+    score = _normalize_aux_map(
+        _normalize_aux_map(
+            detail_residual,
+            clamp_max=getattr(opt, "sfr_aux_map_clamp", 6.0),
+        ) * spatial_weight,
+        clamp_max=getattr(opt, "sfr_aux_map_clamp", 6.0),
+    )
+    stats = {
+        "rho": torch.as_tensor(rho, device=pred.device),
+        "detail_mean": detail_residual.mean().detach(),
+        "gradient_mean": gradient.mean().detach(),
+        "score_mean": score.mean().detach(),
+        "score_max": score.max().detach(),
+    }
+    # A negative map keeps the rasterizer's original metric scale unchanged
+    # while making accum_metric_counts a positive SFR exposure statistic.
+    return -score[0, 0].reshape(-1).contiguous(), stats
 
 
 def _apsr_density_weight(opt, iteration=None, base_weight=None):
@@ -103,6 +200,44 @@ def _log_apsr_density_stats(tb_writer, opt, iteration, prefix, stats_list, apsr_
     if metric_score is not None and metric_score.numel() > 0:
         tb_writer.add_scalar(f"{prefix}/metric_score_mean", metric_score.mean().item(), iteration)
         tb_writer.add_scalar(f"{prefix}/metric_score_std", metric_score.std(unbiased=False).item(), iteration)
+
+
+def _log_sfr_aux_stats(tb_writer, opt, iteration, sfr_stats, sfr_scores=None,
+                       corr=None, corr_gate=None, state_feature=None):
+    if tb_writer is None or iteration is None:
+        return
+    interval = max(int(getattr(opt, "sfr_aux_log_interval", 100)), 1)
+    if iteration % interval != 0:
+        return
+
+    if sfr_stats:
+        keys = sorted(sfr_stats[0].keys())
+        for key in keys:
+            values = [
+                float(stats[key].detach().mean().item())
+                for stats in sfr_stats if key in stats
+            ]
+            if values:
+                tb_writer.add_scalar(
+                    f"sfr_aux/map_{key}", sum(values) / len(values), iteration
+                )
+    if sfr_scores is not None and sfr_scores.numel() > 0:
+        tb_writer.add_scalar("sfr_aux/gs_score_mean", sfr_scores.mean().item(), iteration)
+        tb_writer.add_scalar(
+            "sfr_aux/gs_score_std",
+            sfr_scores.std(unbiased=False).item(),
+            iteration,
+        )
+    if corr is not None:
+        tb_writer.add_scalar("sfr_aux/metric_corr", corr.item(), iteration)
+    if corr_gate is not None:
+        tb_writer.add_scalar("sfr_aux/corr_gate", corr_gate.item(), iteration)
+    if state_feature is not None and state_feature.numel() > 0:
+        tb_writer.add_scalar(
+            "sfr_aux/state_feature_abs_mean",
+            state_feature.detach().abs().mean().item(),
+            iteration,
+        )
 
 
 def _sampled_corrcoef(x, y, mask=None, max_samples=65536):
@@ -191,8 +326,10 @@ def get_gaussians_state_for_rl(camlist, gaussians, pipe, bg, opt, apsr_loss_fn=N
     feature_dc_grads = torch.zeros(num_points, 3, device="cuda", dtype=torch.float32)
     metric_score = torch.zeros(num_points, device="cuda", dtype=torch.float32)
     apsr_scores = torch.zeros(num_points, device="cuda", dtype=torch.float32)
+    sfr_scores = torch.zeros(num_points, device="cuda", dtype=torch.float32)
     gs_weights = torch.zeros(num_points, device="cuda", dtype=torch.float32)
     apsr_stats = []
+    sfr_stats = []
 
     n_views = len(camlist)
     
@@ -243,6 +380,33 @@ def get_gaussians_state_for_rl(camlist, gaussians, pipe, bg, opt, apsr_loss_fn=N
                 apsr_scores += accum_metric_counts
             gs_weights += accum_gs_weight
 
+        # Collect SFR exposure separately so it cannot alter the baseline
+        # metric/reward signal or get entangled with the APSR map.
+        if _sfr_aux_active(opt, iteration):
+            sfr_metric_map, sfr_map_stats = _build_sfr_aux_metric_map(
+                render_image.detach(),
+                gt_image.detach(),
+                opt,
+                iteration,
+            )
+            if sfr_map_stats is not None:
+                sfr_stats.append(sfr_map_stats)
+            with torch.no_grad():
+                sfr_render_pkg = render_fastgs(
+                    my_viewpoint_cam,
+                    gaussians,
+                    pipe,
+                    bg,
+                    opt.mult,
+                    get_flag=True,
+                    metric_map=sfr_metric_map,
+                    gt_image=gt_image,
+                )
+                sfr_counts = sfr_render_pkg["accum_metric_counts"]
+                if sfr_counts.numel() > 0:
+                    sfr_scores += sfr_counts
+            del sfr_render_pkg, sfr_metric_map
+
         del render_pkg, render_image, gt_image, loss, render_pkg2, my_viewpoint_cam
 
     visible_mask = gs_weights > 0
@@ -251,6 +415,7 @@ def get_gaussians_state_for_rl(camlist, gaussians, pipe, bg, opt, apsr_loss_fn=N
     raw_metric_score = metric_score.clone().detach()
     metric_score = sign_log1p(metric_score)
     apsr_scores /= len(camlist)
+    sfr_scores /= len(camlist)
     metric_score_feature = metric_score.clone().detach().unsqueeze(-1)
     metric_score_feature = normalize_features(metric_score_feature)
     
@@ -307,6 +472,43 @@ def get_gaussians_state_for_rl(camlist, gaussians, pipe, bg, opt, apsr_loss_fn=N
             if corr_gate is not None:
                 tb_writer.add_scalar("apsr_density/state/corr_gate", corr_gate.item(), iteration)
 
+    sfr_state_feature = None
+    if _sfr_aux_state_enabled(opt):
+        if _sfr_aux_active(opt, iteration):
+            sfr_state_feature = sign_log1p(sfr_scores).clone().detach().unsqueeze(-1)
+            sfr_state_feature = normalize_features(sfr_state_feature)
+            sfr_corr = _sampled_corrcoef(sfr_scores, raw_metric_score, visible_mask)
+            sfr_corr_gate = None
+            corr_min = min(
+                max(float(getattr(opt, "sfr_aux_corr_gate_min", 0.20)), 0.0),
+                0.99,
+            )
+            if sfr_corr is not None:
+                sfr_corr_gate = torch.clamp(
+                    (sfr_corr - corr_min) / max(1.0 - corr_min, 1e-6),
+                    min=0.0,
+                    max=1.0,
+                )
+            if sfr_corr_gate is None:
+                sfr_corr_gate = torch.zeros((), device=states.device)
+            if bool(getattr(opt, "sfr_aux_use_contribution_gate", 1)):
+                contribution_gate = torch.sigmoid(metric_score_feature.detach())
+                sfr_state_feature = sfr_state_feature * contribution_gate
+            sfr_state_feature = (
+                sfr_state_feature
+                * sfr_corr_gate
+                * _sfr_aux_ramp(opt, iteration)
+                * float(getattr(opt, "sfr_aux_state_weight", 0.25))
+            )
+        else:
+            sfr_corr = None
+            sfr_corr_gate = None
+            sfr_state_feature = torch.zeros_like(metric_score_feature)
+        states = torch.cat([states, sfr_state_feature], dim=-1)
+    else:
+        sfr_corr = None
+        sfr_corr_gate = None
+
     _log_apsr_density_stats(
         tb_writer,
         opt,
@@ -316,6 +518,16 @@ def get_gaussians_state_for_rl(camlist, gaussians, pipe, bg, opt, apsr_loss_fn=N
         apsr_scores,
         metric_score,
         visible_mask,
+    )
+    _log_sfr_aux_stats(
+        tb_writer,
+        opt,
+        iteration,
+        sfr_stats,
+        sfr_scores if _sfr_aux_active(opt, iteration) else None,
+        sfr_corr,
+        sfr_corr_gate,
+        sfr_state_feature,
     )
 
     return states, metric_score, visible_mask

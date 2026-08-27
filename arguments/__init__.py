@@ -124,6 +124,21 @@ class OptimizationParams(ParamGroup):
         self.apsr_density_prune_scale = 1.0
         self.apsr_density_final_prune_scale = 1.0
         self.apsr_density_log_interval = 100
+        # SFR is an auxiliary signal for RL density decisions.  It is
+        # disabled by default so old baseline runs remain unchanged.
+        self.sfr_aux_enable = 0
+        self.sfr_aux_use_state = 1
+        self.sfr_aux_use_residual_adapter = 1
+        self.sfr_aux_adapter_scale = 1.0
+        self.sfr_aux_start_iter = 1500
+        self.sfr_aux_ramp_iters = 3000
+        self.sfr_aux_kernel_size = 5
+        self.sfr_aux_tau = 0.5
+        self.sfr_aux_map_clamp = 6.0
+        self.sfr_aux_state_weight = 0.25
+        self.sfr_aux_use_contribution_gate = 1
+        self.sfr_aux_corr_gate_min = 0.20
+        self.sfr_aux_log_interval = 100
         self.densification_interval = 100
         self.opacity_reset_interval = 3000
         self.densify_from_iter = 500

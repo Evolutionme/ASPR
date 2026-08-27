@@ -203,7 +203,8 @@ def _log_apsr_density_stats(tb_writer, opt, iteration, prefix, stats_list, apsr_
 
 
 def _log_sfr_aux_stats(tb_writer, opt, iteration, sfr_stats, sfr_scores=None,
-                       corr=None, corr_gate=None, state_feature=None):
+                       corr=None, corr_gate=None, state_feature=None,
+                       exposure=None):
     if tb_writer is None or iteration is None:
         return
     interval = max(int(getattr(opt, "sfr_aux_log_interval", 100)), 1)
@@ -238,6 +239,19 @@ def _log_sfr_aux_stats(tb_writer, opt, iteration, sfr_stats, sfr_scores=None,
             state_feature.detach().abs().mean().item(),
             iteration,
         )
+    if exposure is not None and exposure.numel() > 0:
+        visible_exposure = exposure[exposure > 0]
+        if visible_exposure.numel() > 0:
+            tb_writer.add_scalar(
+                "sfr_aux/exposure_mean",
+                visible_exposure.mean().item(),
+                iteration,
+            )
+            tb_writer.add_scalar(
+                "sfr_aux/exposure_median",
+                visible_exposure.median().item(),
+                iteration,
+            )
 
 
 def _sampled_corrcoef(x, y, mask=None, max_samples=65536):
@@ -416,6 +430,26 @@ def get_gaussians_state_for_rl(camlist, gaussians, pipe, bg, opt, apsr_loss_fn=N
     metric_score = sign_log1p(metric_score)
     apsr_scores /= len(camlist)
     sfr_scores /= len(camlist)
+    sfr_exposure = gs_weights / float(max(len(camlist), 1))
+    if (
+        bool(getattr(opt, "sfr_aux_use_exposure_normalization", 1))
+        and sfr_exposure.numel() > 0
+    ):
+        visible_exposure = sfr_exposure[sfr_exposure > 0]
+        if visible_exposure.numel() > 0:
+            exposure_reference = visible_exposure.mean().clamp_min(1e-6)
+            smoothing_ratio = max(
+                float(getattr(opt, "sfr_aux_exposure_smoothing", 0.05)),
+                0.0,
+            )
+            exposure_smoothing = exposure_reference * smoothing_ratio
+            # Convert exposure-weighted accumulation into an average
+            # high-frequency error per visible contribution.  The small
+            # relative smoothing term prevents rarely visible Gaussians from
+            # producing unstable state values.
+            sfr_scores = sfr_scores / (
+                sfr_exposure + exposure_smoothing
+            ).clamp_min(1e-6)
     metric_score_feature = metric_score.clone().detach().unsqueeze(-1)
     metric_score_feature = normalize_features(metric_score_feature)
     
@@ -484,11 +518,21 @@ def get_gaussians_state_for_rl(camlist, gaussians, pipe, bg, opt, apsr_loss_fn=N
                 0.99,
             )
             if sfr_corr is not None:
-                sfr_corr_gate = torch.clamp(
-                    (sfr_corr - corr_min) / max(1.0 - corr_min, 1e-6),
-                    min=0.0,
-                    max=1.0,
+                corr_temperature = max(
+                    float(getattr(opt, "sfr_aux_corr_gate_temperature", 0.15)),
+                    1e-3,
                 )
+                corr_floor = min(
+                    max(
+                        float(getattr(opt, "sfr_aux_corr_gate_floor", 0.05)),
+                        0.0,
+                    ),
+                    1.0,
+                )
+                soft_gate = torch.sigmoid(
+                    (sfr_corr - corr_min) / corr_temperature
+                )
+                sfr_corr_gate = corr_floor + (1.0 - corr_floor) * soft_gate
             if sfr_corr_gate is None:
                 sfr_corr_gate = torch.zeros((), device=states.device)
             if bool(getattr(opt, "sfr_aux_use_contribution_gate", 1)):
@@ -528,6 +572,7 @@ def get_gaussians_state_for_rl(camlist, gaussians, pipe, bg, opt, apsr_loss_fn=N
         sfr_corr,
         sfr_corr_gate,
         sfr_state_feature,
+        sfr_exposure,
     )
 
     return states, metric_score, visible_mask

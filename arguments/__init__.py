@@ -138,6 +138,10 @@ class OptimizationParams(ParamGroup):
         self.sfr_aux_state_weight = 0.25
         self.sfr_aux_use_contribution_gate = 1
         self.sfr_aux_corr_gate_min = 0.20
+        self.sfr_aux_corr_gate_temperature = 0.15
+        self.sfr_aux_corr_gate_floor = 0.05
+        self.sfr_aux_use_exposure_normalization = 1
+        self.sfr_aux_exposure_smoothing = 0.05
         self.sfr_aux_log_interval = 100
         self.densification_interval = 100
         self.opacity_reset_interval = 3000

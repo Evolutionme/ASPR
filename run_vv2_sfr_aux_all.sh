@@ -27,10 +27,11 @@ DENSITY_CONSERVATIVE="--use_apsr_density_control 1 --lambda_apsr_density 0.10 --
 DENSITY_CONSERVATIVE_PRUNE095="--use_apsr_density_control 1 --lambda_apsr_density 0.10 --apsr_density_start_iter 1500 --apsr_density_warmup_iters 3000 --apsr_density_map_clamp 6.0 --apsr_density_use_state 1 --apsr_density_state_weight 0.25 --apsr_density_use_contribution_gate 1 --apsr_density_gate_temperature 1.0 --apsr_density_gate_floor 0.0 --apsr_density_use_corr_gate 1 --apsr_density_corr_gate_floor 0.1 --apsr_density_use_reward 0 --apsr_density_reward_weight 0.05 --apsr_density_prune_scale 0.95 --apsr_density_log_interval 100"
 DENSITY_TRUCK="--use_apsr_density_control 1 --lambda_apsr_density 0.30 --apsr_density_start_iter 1500 --apsr_density_warmup_iters 3000 --apsr_density_map_clamp 6.0 --apsr_density_use_state 1 --apsr_density_state_weight 0.75 --apsr_density_use_contribution_gate 1 --apsr_density_gate_temperature 1.0 --apsr_density_gate_floor 0.0 --apsr_density_use_corr_gate 1 --apsr_density_corr_gate_floor 0.1 --apsr_density_use_reward 0 --apsr_density_reward_weight 0.05 --apsr_density_prune_scale 1.0 --apsr_density_log_interval 100"
 
-SFR_MIP="--sfr_aux_enable 1 --sfr_aux_use_state 1 --sfr_aux_use_residual_adapter 1 --sfr_aux_adapter_scale 1.0 --sfr_aux_start_iter 1500 --sfr_aux_ramp_iters 3000 --sfr_aux_kernel_size 5 --sfr_aux_tau 0.5 --sfr_aux_map_clamp 6.0 --sfr_aux_state_weight 0.25 --sfr_aux_use_contribution_gate 1 --sfr_aux_corr_gate_min 0.20 --sfr_aux_corr_gate_temperature 0.15 --sfr_aux_corr_gate_floor 0.05 --sfr_aux_use_exposure_normalization 1 --sfr_aux_exposure_smoothing 0.05 --sfr_aux_log_interval 100"
-SFR_TNT_TRAIN_NEW="--sfr_aux_enable 1 --sfr_aux_use_state 1 --sfr_aux_use_residual_adapter 1 --sfr_aux_start_iter 1500 --sfr_aux_ramp_iters 3000 --sfr_aux_kernel_size 5 --sfr_aux_tau 0.5 --sfr_aux_state_weight 0.25 --sfr_aux_use_contribution_gate 1 --sfr_aux_corr_gate_min 0.20 --sfr_aux_corr_gate_temperature 0.15 --sfr_aux_corr_gate_floor 0.05 --sfr_aux_use_exposure_normalization 1 --sfr_aux_exposure_smoothing 0.05 --sfr_aux_log_interval 100"
-SFR_TNT="--sfr_aux_enable 1 --sfr_aux_use_state 1 --sfr_aux_use_residual_adapter 1 --sfr_aux_adapter_scale 1.0 --sfr_aux_start_iter 1500 --sfr_aux_ramp_iters 3000 --sfr_aux_kernel_size 5 --sfr_aux_tau 0.5 --sfr_aux_map_clamp 6.0 --sfr_aux_state_weight 0.25 --sfr_aux_use_contribution_gate 1 --sfr_aux_corr_gate_min 0.20 --sfr_aux_corr_gate_temperature 0.15 --sfr_aux_corr_gate_floor 0.05 --sfr_aux_use_exposure_normalization 1 --sfr_aux_exposure_smoothing 0.05 --sfr_aux_log_interval 100"
-SFR_DB="--sfr_aux_enable 1 --sfr_aux_use_state 1 --sfr_aux_use_residual_adapter 1 --sfr_aux_adapter_scale 1.0 --sfr_aux_start_iter 1500 --sfr_aux_ramp_iters 3000 --sfr_aux_kernel_size 3 --sfr_aux_tau 0.5 --sfr_aux_map_clamp 6.0 --sfr_aux_state_weight 0.25 --sfr_aux_use_contribution_gate 1 --sfr_aux_corr_gate_min 0.20 --sfr_aux_corr_gate_temperature 0.15 --sfr_aux_corr_gate_floor 0.05 --sfr_aux_use_exposure_normalization 1 --sfr_aux_exposure_smoothing 0.05 --sfr_aux_log_interval 100"
+#SFR_MIP="--sfr_aux_enable 1 --sfr_aux_use_state 1 --sfr_aux_use_residual_adapter 1 --sfr_aux_adapter_scale 1.0 --sfr_aux_start_iter 1500 --sfr_aux_ramp_iters 3000 --sfr_aux_kernel_size 5 --sfr_aux_tau 0.5 --sfr_aux_map_clamp 6.0 --sfr_aux_state_weight 0.25 --sfr_aux_use_contribution_gate 1 --sfr_aux_corr_gate_min 0.20 --sfr_aux_log_interval 100"
+SFR_MIP_ROOM="--sfr_aux_enable 1 --sfr_aux_use_state 1 --sfr_aux_use_residual_adapter 1 --sfr_aux_adapter_scale 0.75 --sfr_aux_start_iter 2500 --sfr_aux_ramp_iters 5000 --sfr_aux_kernel_size 5 --sfr_aux_tau 0.30 --sfr_aux_map_clamp 4.0 --sfr_aux_state_weight 0.15 --sfr_aux_use_contribution_gate 1 --sfr_aux_corr_gate_min 0.25 --sfr_aux_log_interval 100"
+SFR_TNT_TRAIN_NEW="--sfr_aux_enable 1 --sfr_aux_use_state 1 --sfr_aux_use_residual_adapter 1 --sfr_aux_start_iter 1500 --sfr_aux_ramp_iters 3000 --sfr_aux_kernel_size 5 --sfr_aux_tau 0.5 --sfr_aux_state_weight 0.25 --sfr_aux_use_contribution_gate 1 --sfr_aux_corr_gate_min 0.20 --sfr_aux_log_interval 100"
+SFR_TNT="--sfr_aux_enable 1 --sfr_aux_use_state 1 --sfr_aux_use_residual_adapter 1 --sfr_aux_adapter_scale 1.0 --sfr_aux_start_iter 1500 --sfr_aux_ramp_iters 3000 --sfr_aux_kernel_size 5 --sfr_aux_tau 0.5 --sfr_aux_map_clamp 6.0 --sfr_aux_state_weight 0.25 --sfr_aux_use_contribution_gate 1 --sfr_aux_corr_gate_min 0.20 --sfr_aux_log_interval 100"
+SFR_DB="--sfr_aux_enable 1 --sfr_aux_use_state 1 --sfr_aux_use_residual_adapter 1 --sfr_aux_adapter_scale 1.0 --sfr_aux_start_iter 1500 --sfr_aux_ramp_iters 3000 --sfr_aux_kernel_size 3 --sfr_aux_tau 0.5 --sfr_aux_map_clamp 6.0 --sfr_aux_state_weight 0.25 --sfr_aux_use_contribution_gate 1 --sfr_aux_corr_gate_min 0.20 --sfr_aux_log_interval 100"
 
 run_scene() {
     local name="$1"
@@ -63,17 +64,17 @@ echo "Output root: $OUT_ROOT"
 # run_scene flowers "$OUT_ROOT/flowers" -s /root/360_v2/flowers -i images_4 --eval --densification_interval 100 --optimizer_type default --grad_abs_thresh 0.0004 $APSR_MIP $DENSITY_DEFAULT $SFR_MIP
 # render_and_metric "$OUT_ROOT/flowers"
 
-# run_scene garden "$OUT_ROOT/garden" -s /root/360_v2/garden -i images_4 --eval --densification_interval 100 --optimizer_type default --highfeature_lr 0.02 --loss_thresh 0.06 --grad_abs_thresh 0.0002 $APSR_MIP $DENSITY_DEFAULT $SFR_MIP
+# run_scene garden "$OUT_ROOT/garden" -s /root/360_v2/garden -i images_4 --eval --densification_interval 100 --optimizer_type default --highfeature_lr 0.02 --loss_thresh 0.06 --grad_abs_thresh 0.0002 $APSR_MIP $DENSITY_DEFAULT $SFR_MIP_ROOM
 # render_and_metric "$OUT_ROOT/garden"
 
-# run_scene room "$OUT_ROOT/room" -s /root/360_v2/room -i images_2 --eval --densification_interval 100 --optimizer_type default --highfeature_lr 0.02 --grad_abs_thresh 0.0002 $APSR_MIP $DENSITY_DEFAULT $SFR_MIP
+# run_scene room "$OUT_ROOT/room" -s /root/360_v2/room -i images_2 --eval --densification_interval 100 --optimizer_type default --highfeature_lr 0.02 --grad_abs_thresh 0.0002 $APSR_MIP $DENSITY_DEFAULT $SFR_MIP_ROOM
 # render_and_metric "$OUT_ROOT/room"
 
-run_scene bonsai "$OUT_ROOT/bonsai" -s /root/360_v2/bonsai -i images_2 --eval --densification_interval 100 --optimizer_type default --highfeature_lr 0.02 --grad_abs_thresh 0.0001 $APSR_MIP $DENSITY_DEFAULT_PRUNE095 $SFR_MIP
-render_and_metric "$OUT_ROOT/bonsai"
+# run_scene bonsai "$OUT_ROOT/bonsai" -s /root/360_v2/bonsai -i images_2 --eval --densification_interval 100 --optimizer_type default --highfeature_lr 0.02 --grad_abs_thresh 0.0001 $APSR_MIP $DENSITY_DEFAULT_PRUNE095 $SFR_MIP_ROOM
+# render_and_metric "$OUT_ROOT/bonsai"
 
-# run_scene counter "$OUT_ROOT/counter" -s /root/360_v2/counter -i images_2 --eval --densification_interval 100 --optimizer_type default --highfeature_lr 0.02 --grad_abs_thresh 0.0002 $APSR_MIP $DENSITY_CONSERVATIVE_PRUNE095 $SFR_MIP
-# render_and_metric "$OUT_ROOT/counter"
+run_scene counter "$OUT_ROOT/counter" -s /root/360_v2/counter -i images_2 --eval --densification_interval 100 --optimizer_type default --highfeature_lr 0.02 --grad_abs_thresh 0.0002 $APSR_MIP $DENSITY_CONSERVATIVE_PRUNE095 $SFR_MIP_ROOM
+render_and_metric "$OUT_ROOT/counter"
 
 # run_scene kitchen "$OUT_ROOT/kitchen" -s /root/360_v2/kitchen -i images_2 --eval --densification_interval 100 --optimizer_type default --highfeature_lr 0.02 --grad_abs_thresh 0.0001 $APSR_MIP $DENSITY_DEFAULT $SFR_MIP
 # render_and_metric "$OUT_ROOT/kitchen"
